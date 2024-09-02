@@ -2,9 +2,10 @@ use std::{thread, time::Duration};
 
 use rppal::gpio::{Gpio, Level, OutputPin, Result};
 
-const ROW_DRIVE_CLOCK_SLEEP: Duration = Duration::from_micros(2);
-const ROW_WRITE_CLOCK_SLEEP: Duration = Duration::from_micros(2);
-const LAYER_STROBE_SLEEP: Duration = Duration::from_micros(30);
+const SLOWDOWN: u64 = 1;
+const ROW_DRIVE_CLOCK_SLEEP: Duration = Duration::from_micros(20 * SLOWDOWN);
+const ROW_WRITE_CLOCK_SLEEP: Duration = Duration::from_micros(20 * SLOWDOWN);
+const LAYER_STROBE_SLEEP: Duration = Duration::from_micros(500 * SLOWDOWN);
 
 /**
  * Handles all bit-banging and state for driving the cube
@@ -33,7 +34,7 @@ pub struct CubeDriver {
 
 #[inline]
 fn check_bit(value: u8, pow2: u8) -> Level {
-    if (value & pow2 == 0) {
+    if value & pow2 == 0 {
         Level::Low
     } else {
         Level::High
@@ -87,6 +88,8 @@ impl CubeDriver {
 
         // Clear the buffers
         par_srclr.set_low();
+        thread::sleep(Duration::from_micros(5));
+        par_srclr.set_high();
         thread::sleep(Duration::from_micros(5));
 
         Ok(CubeDriver {
@@ -157,8 +160,8 @@ impl CubeDriver {
     }
 
     pub fn write_frame(&mut self, data: [[u8; 8]; 8]) {
-        for (layer, rows) in data.iter().enumerate() {
-            self.write_layer(layer.into(), rows);
+        for (rows, layer) in data.iter().zip(0u8..) {
+            self.write_layer(layer, *rows);
             thread::sleep(LAYER_STROBE_SLEEP);
         }
     }

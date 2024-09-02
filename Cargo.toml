@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 # ctrlc = "3.4"
 rppal = "0.17.1"
+clap = { version = "4.0", features = ["derive"] }
