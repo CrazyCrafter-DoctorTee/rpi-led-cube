@@ -2,9 +2,11 @@ mod cube;
 
 use std::{
     iter::{once, repeat},
-    sync::Arc,
-    sync::atomic::{AtomicBool, Ordering},
-    sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{sync_channel, Receiver, SyncSender, TryRecvError},
+        Arc,
+    },
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -58,10 +60,16 @@ enum Program {
     AllOn,
     /// Cycle one layer at a time
     Cycle,
+    /// Plane waves moving diagonally
+    PlaneWave { reflect: Option<bool> },
+    /// Turn on alternate LEDs like a chessboard
+    Chess { invert: Option<bool> },
     /// Turn on one full layer of LEDs
     OneLayer { which: Index },
     /// Turn on one full row of LEDs
     OneRow { which: Index },
+    /// Turn on one full column of LEDs
+    OneCol { which: Index },
 }
 
 fn spawn_display() -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
@@ -72,7 +80,8 @@ fn spawn_display() -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
 
         let mut curr_frame = [[0; 8]; 8];
 
-        while let maybe_frame = rx.try_recv() {
+        loop {
+            let maybe_frame = rx.try_recv();
             if let Ok(frame) = maybe_frame {
                 curr_frame = frame;
             } else if let Err(TryRecvError::Disconnected) = maybe_frame {
@@ -87,7 +96,7 @@ fn spawn_display() -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
     (tx, handler)
 }
 
-fn test_dummy_on(stop_token: Arc<AtomicBool>) {
+fn test_all_on(stop_token: Arc<AtomicBool>) {
     let mut driver = CubeDriver::try_new().unwrap();
 
     while !stop_token.load(Ordering::Relaxed) {
@@ -98,13 +107,33 @@ fn test_dummy_on(stop_token: Arc<AtomicBool>) {
 fn test_one_row(row: Index, stop_token: Arc<AtomicBool>) {
     let mut driver = CubeDriver::try_new().unwrap();
 
-    let layer_pattern: [u8; 8] = core::array::from_fn(|i| {
-        if i == u8::from(row).into() {
-            255
-        } else {
-            0
-        }
-    });
+    let layer_pattern: [u8; 8] =
+        core::array::from_fn(|i| if i == u8::from(row).into() { 255 } else { 0 });
+
+    let frame = [layer_pattern; 8];
+
+    while !stop_token.load(Ordering::Relaxed) {
+        driver.write_frame(frame);
+    }
+}
+
+fn test_one_col(col: Index, stop_token: Arc<AtomicBool>) {
+    let mut driver = CubeDriver::try_new().unwrap();
+
+    let frame = [[1 << u8::from(col); 8]; 8];
+
+    while !stop_token.load(Ordering::Relaxed) {
+        driver.write_frame(frame);
+    }
+}
+
+fn test_chess(invert: bool, stop_token: Arc<AtomicBool>) {
+    let mut driver = CubeDriver::try_new().unwrap();
+
+    let evens: u8 = 170;
+    let odds: u8 = 85;
+
+    let layer_pattern = core::array::from_fn(|i| if (i % 2 == 0) != invert { evens } else { odds });
 
     let frame = [layer_pattern; 8];
 
@@ -129,32 +158,61 @@ fn test_one_layer(layer: Index, stop_token: Arc<AtomicBool>) {
     }
 }
 
-fn test_all_on(stop_token: Arc<AtomicBool>) {
-    let (sender, _handle) = spawn_display();
-
-    while !stop_token.load(Ordering::Relaxed) {
-        sender.send([[255; 8]; 8]);
-    }
-}
-
 fn test_cycle_layers(stop_token: Arc<AtomicBool>) {
-    let (sender, _handle) = spawn_display();
+    let (sender, handle) = spawn_display();
 
     let mut layer_cycle = once([255; 8]).chain(repeat([0; 8]).take(8)).cycle();
 
     while !stop_token.load(Ordering::Relaxed) {
         // Cycle through a window of 9 layers with one lit
-        sender.send([
-            layer_cycle.next().unwrap(),
-            layer_cycle.next().unwrap(),
-            layer_cycle.next().unwrap(),
-            layer_cycle.next().unwrap(),
-            layer_cycle.next().unwrap(),
-            layer_cycle.next().unwrap(),
-            layer_cycle.next().unwrap(),
-            layer_cycle.next().unwrap(),
-        ]);
+        if sender
+            .send([
+                layer_cycle.next().unwrap(),
+                layer_cycle.next().unwrap(),
+                layer_cycle.next().unwrap(),
+                layer_cycle.next().unwrap(),
+                layer_cycle.next().unwrap(),
+                layer_cycle.next().unwrap(),
+                layer_cycle.next().unwrap(),
+                layer_cycle.next().unwrap(),
+            ])
+            .is_err()
+        {
+            eprintln!("Failed to write layer");
+            break;
+        }
+
+        thread::sleep(INTER_FRAME_SLEEP);
     }
+
+    drop(sender);
+
+    let _ = handle.join().expect("Could not join sender thread");
+}
+
+fn test_diag_plane_wave(reflect: bool, stop_token: Arc<AtomicBool>) {
+    let (sender, handle) = spawn_display();
+
+    let base: [u8; 8] = core::array::from_fn(|i| 1u8.rotate_left(i.try_into().unwrap()));
+
+    let mut frame_cycle = (0u32..8u32)
+        .map(|i| base.map(|row| row.rotate_left(i)))
+        .chain((0u32..8u32).map(|i| base.map(|row| row.rotate_right(i))))
+        .take(if reflect { 15 } else { 8 })
+        .cycle();
+
+    while !stop_token.load(Ordering::Relaxed) {
+        if sender.send([frame_cycle.next().unwrap(); 8]).is_err() {
+            eprintln!("Failed to write layer");
+            break;
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    drop(sender);
+
+    let _ = handle.join().expect("Could not join sender thread");
 }
 
 fn main() {
@@ -166,12 +224,18 @@ fn main() {
     ctrlc::set_handler(move || {
         println!("Exiting...");
         stop_token_clone.store(true, Ordering::Relaxed);
-    }).expect("Error setting Ctrl-C handler");
+    })
+    .expect("Error setting Ctrl-C handler");
 
     match args.program {
-        Program::AllOn => test_dummy_on(stop_token),
+        Program::AllOn => test_all_on(stop_token),
         Program::Cycle => test_cycle_layers(stop_token),
+        Program::PlaneWave { reflect } => {
+            test_diag_plane_wave(reflect.unwrap_or_default(), stop_token)
+        }
+        Program::Chess { invert } => test_chess(invert.unwrap_or_default(), stop_token),
         Program::OneLayer { which: layer } => test_one_layer(layer, stop_token),
         Program::OneRow { which: row } => test_one_row(row, stop_token),
+        Program::OneCol { which: col } => test_one_col(col, stop_token),
     };
 }
