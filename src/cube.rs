@@ -74,8 +74,8 @@ impl CubeDriver {
         let par_1 = gpio.get(12)?.into_output_low();
         let par_2 = gpio.get(05)?.into_output_low();
         let par_3 = gpio.get(10)?.into_output_low();
-        let par_4 = gpio.get(15)?.into_output_low();
-        let par_5 = gpio.get(14)?.into_output_low();
+        let par_4 = gpio.get(18)?.into_output_low();
+        let par_5 = gpio.get(17)?.into_output_low();
         let par_6 = gpio.get(04)?.into_output_low();
         let par_7 = gpio.get(02)?.into_output_low();
         let par_8 = gpio.get(03)?.into_output_low();
