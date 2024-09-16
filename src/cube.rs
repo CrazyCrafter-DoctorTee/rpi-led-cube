@@ -159,6 +159,11 @@ impl CubeDriver {
         thread::sleep(ROW_WRITE_CLOCK_SLEEP);
     }
 
+    pub fn test_layer(&mut self, layer: u8, data: [u8; 8]) {
+        self.write_layer(layer, data);
+        thread::sleep(LAYER_STROBE_SLEEP);
+    }
+
     pub fn write_frame(&mut self, data: [[u8; 8]; 8]) {
         for (rows, layer) in data.iter().zip(0u8..) {
             self.write_layer(layer, *rows);

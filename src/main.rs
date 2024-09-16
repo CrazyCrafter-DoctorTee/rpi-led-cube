@@ -145,16 +145,17 @@ fn test_chess(invert: bool, stop_token: Arc<AtomicBool>) {
 fn test_one_layer(layer: Index, stop_token: Arc<AtomicBool>) {
     let mut driver = CubeDriver::try_new().unwrap();
 
-    let frame: [[u8; 8]; 8] = core::array::from_fn(|i| {
-        if i == u8::from(layer).into() {
-            [255; 8]
-        } else {
-            [0; 8]
-        }
-    });
+    // let frame: [[u8; 8]; 8] = core::array::from_fn(|i| {
+    //     if i == u8::from(layer).into() {
+    //         [255; 8]
+    //     } else {
+    //         [0; 8]
+    //     }
+    // });
 
     while !stop_token.load(Ordering::Relaxed) {
-        driver.write_frame(frame);
+        // driver.write_frame(frame);
+        driver.test_layer(layer.into(), [255; 8]);
     }
 }
 
