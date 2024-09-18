@@ -17,8 +17,6 @@ use cube::CubeDriver;
 
 type Frame = [[u8; 8]; 8];
 
-const INTER_FRAME_SLEEP: Duration = Duration::from_millis(19); // 50ish FPS
-
 /// Bit-bang the PI GPIO pins to render 3D values on the LED cube
 #[derive(Parser)]
 struct Cli {
@@ -62,6 +60,8 @@ enum Program {
     Cycle,
     /// Plane waves moving diagonally
     PlaneWave { reflect: Option<bool> },
+    /// Flat wave
+    Wave { rotate: Option<bool> },
     /// Turn on alternate LEDs like a chessboard
     Chess { invert: Option<bool> },
     /// Turn on one full layer of LEDs
@@ -183,7 +183,7 @@ fn test_cycle_layers(stop_token: Arc<AtomicBool>) {
             break;
         }
 
-        thread::sleep(INTER_FRAME_SLEEP);
+        thread::sleep(Duration::from_millis(100));
     }
 
     drop(sender);
@@ -200,6 +200,31 @@ fn test_diag_plane_wave(reflect: bool, stop_token: Arc<AtomicBool>) {
         .map(|i| base.map(|row| row.rotate_left(i)))
         .chain((0u32..8u32).map(|i| base.map(|row| row.rotate_right(i))))
         .take(if reflect { 15 } else { 8 })
+        .cycle();
+
+    while !stop_token.load(Ordering::Relaxed) {
+        if sender.send([frame_cycle.next().unwrap(); 8]).is_err() {
+            eprintln!("Failed to write layer");
+            break;
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    drop(sender);
+
+    let _ = handle.join().expect("Could not join sender thread");
+}
+
+fn test_flat_wave(rotate: bool, stop_token: Arc<AtomicBool>) {
+    let (sender, handle) = spawn_display();
+
+    let base: [u8; 8] = core::array::from_fn(|i| 1u8.rotate_left(i.try_into().unwrap()));
+
+    let mut frame_cycle = (0u32..8u32)
+        .map(|i| base.map(|row| row.rotate_left(i)))
+        .chain((0u32..8u32).map(|i| base.map(|row| row.rotate_right(i))))
+        .take(if rotate { 15 } else { 8 })
         .cycle();
 
     while !stop_token.load(Ordering::Relaxed) {
@@ -233,6 +258,9 @@ fn main() {
         Program::Cycle => test_cycle_layers(stop_token),
         Program::PlaneWave { reflect } => {
             test_diag_plane_wave(reflect.unwrap_or_default(), stop_token)
+        }
+        Program::Wave { rotate } => {
+            test_flat_wave(rotate.unwrap_or_default(), stop_token)
         }
         Program::Chess { invert } => test_chess(invert.unwrap_or_default(), stop_token),
         Program::OneLayer { which: layer } => test_one_layer(layer, stop_token),
