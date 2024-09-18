@@ -3,9 +3,9 @@ use std::{thread, time::Duration};
 use rppal::gpio::{Gpio, Level, OutputPin, Result};
 
 const SLOWDOWN: u64 = 1;
-const ROW_DRIVE_CLOCK_SLEEP: Duration = Duration::from_micros(20 * SLOWDOWN);
-const ROW_WRITE_CLOCK_SLEEP: Duration = Duration::from_micros(20 * SLOWDOWN);
-const LAYER_STROBE_SLEEP: Duration = Duration::from_micros(500 * SLOWDOWN);
+const ROW_DRIVE_CLOCK_SLEEP: Duration = Duration::from_micros(5 * SLOWDOWN);
+const ROW_WRITE_CLOCK_SLEEP: Duration = Duration::from_micros(5 * SLOWDOWN);
+const LAYER_STROBE_SLEEP: Duration = Duration::from_micros(100 * SLOWDOWN);
 
 /**
  * Handles all bit-banging and state for driving the cube
