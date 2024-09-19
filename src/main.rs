@@ -219,16 +219,23 @@ fn test_diag_plane_wave(reflect: bool, stop_token: Arc<AtomicBool>) {
 fn test_flat_wave(rotate: bool, stop_token: Arc<AtomicBool>) {
     let (sender, handle) = spawn_display();
 
-    let base: [u8; 8] = core::array::from_fn(|i| 1u8.rotate_left(i.try_into().unwrap()));
+    let template: [[u8; 12]; 8] = [
+        [0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 255, 0, 0, 255, 0, 0, 0, 0],
+        [0, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 0],
+        [0, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 0],
+        [0, 0, 255, 0, 0, 0, 0, 0, 0, 255, 0, 0],
+        [0, 0, 255, 0, 0, 0, 0, 0, 0, 255, 0, 0],
+        [0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0],
+        [255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255],
+    ];
 
-    let mut frame_cycle = (0u32..8u32)
-        .map(|i| base.map(|row| row.rotate_left(i)))
-        .chain((0u32..8u32).map(|i| base.map(|row| row.rotate_right(i))))
-        .take(if rotate { 15 } else { 8 })
+    let mut frame_cycle = (0usize..template.len())
+        .map(|i| core::array::from_fn(|layer| core::array::from_fn(|j| template[layer][(i + j) % 12])))
         .cycle();
 
     while !stop_token.load(Ordering::Relaxed) {
-        if sender.send([frame_cycle.next().unwrap(); 8]).is_err() {
+        if sender.send(frame_cycle.next().unwrap()).is_err() {
             eprintln!("Failed to write layer");
             break;
         }
@@ -259,9 +266,7 @@ fn main() {
         Program::PlaneWave { reflect } => {
             test_diag_plane_wave(reflect.unwrap_or_default(), stop_token)
         }
-        Program::Wave { rotate } => {
-            test_flat_wave(rotate.unwrap_or_default(), stop_token)
-        }
+        Program::Wave { rotate } => test_flat_wave(rotate.unwrap_or_default(), stop_token),
         Program::Chess { invert } => test_chess(invert.unwrap_or_default(), stop_token),
         Program::OneLayer { which: layer } => test_one_layer(layer, stop_token),
         Program::OneRow { which: row } => test_one_row(row, stop_token),
