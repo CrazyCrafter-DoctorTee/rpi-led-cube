@@ -26,6 +26,27 @@ struct Cli {
 }
 
 #[derive(Copy, Clone, ValueEnum)]
+/// Assume +X is "forward", +Y is "left", and +Z is "up", then
+enum Rotation {
+    /// Rotate about X
+    I,
+    /// Rotate about Y
+    J,
+    /// Rotate about Z
+    K,
+}
+
+impl Rotation {
+    fn apply(&self, data: &[[u8; 8]; 8]) -> [[u8; 8]; 8] {
+        match self {
+            Self::I => core::array::from_fn(|i| core::array::from_fn(|j| data[j][i])),
+            Self::J => core::array::from_fn(|i| core::array::from_fn(|j| data[j].into_iter().fold(0u8, |acc, e| (acc << 1) + if e & (1 << i) != 0 { 1 } else { 0 }))),
+            Self::K => core::array::from_fn(|i| core::array::from_fn(|j| data[i].into_iter().fold(0u8, |acc, e| (acc << 1) + if e & (1 << j) != 0 { 1 } else { 0 }))),
+        }
+    }
+}
+
+#[derive(Copy, Clone, ValueEnum)]
 enum Index {
     Zero,
     One,
@@ -61,7 +82,7 @@ enum Program {
     /// Plane waves moving diagonally
     PlaneWave { reflect: Option<bool> },
     /// Flat wave
-    Wave { rotate: Option<bool> },
+    Wave { rotate: Option<Rotation> },
     /// Turn on alternate LEDs like a chessboard
     Chess { invert: Option<bool> },
     /// Turn on one full layer of LEDs
@@ -145,17 +166,16 @@ fn test_chess(invert: bool, stop_token: Arc<AtomicBool>) {
 fn test_one_layer(layer: Index, stop_token: Arc<AtomicBool>) {
     let mut driver = CubeDriver::try_new().unwrap();
 
-    // let frame: [[u8; 8]; 8] = core::array::from_fn(|i| {
-    //     if i == u8::from(layer).into() {
-    //         [255; 8]
-    //     } else {
-    //         [0; 8]
-    //     }
-    // });
+    let frame: [[u8; 8]; 8] = core::array::from_fn(|i| {
+        if i == u8::from(layer).into() {
+            [255; 8]
+        } else {
+            [0; 8]
+        }
+    });
 
     while !stop_token.load(Ordering::Relaxed) {
-        // driver.write_frame(frame);
-        driver.test_layer(layer.into(), [255; 8]);
+        driver.write_frame(frame);
     }
 }
 
@@ -216,7 +236,7 @@ fn test_diag_plane_wave(reflect: bool, stop_token: Arc<AtomicBool>) {
     let _ = handle.join().expect("Could not join sender thread");
 }
 
-fn test_flat_wave(rotate: bool, stop_token: Arc<AtomicBool>) {
+fn test_flat_wave(rotate: Option<Rotation>, stop_token: Arc<AtomicBool>) {
     let (sender, handle) = spawn_display();
 
     let template: [[u8; 12]; 8] = [
@@ -230,12 +250,19 @@ fn test_flat_wave(rotate: bool, stop_token: Arc<AtomicBool>) {
         [255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255],
     ];
 
-    let mut frame_cycle = (0usize..template.len())
-        .map(|i| core::array::from_fn(|layer| core::array::from_fn(|j| template[layer][(i + j) % 12])))
+    // LCM 8, 12 = 24
+    let mut frame_cycle = (0usize..96)
+        .map(|i| {
+            core::array::from_fn(|layer| {
+                core::array::from_fn(|j| template[layer][(i + j) % template[layer].len()])
+            })
+        })
         .cycle();
 
     while !stop_token.load(Ordering::Relaxed) {
-        if sender.send(frame_cycle.next().unwrap()).is_err() {
+        let next = frame_cycle.next().unwrap();
+        let next_frame = rotate.map_or(next, |r| r.apply(&next));
+        if sender.send(next_frame).is_err() {
             eprintln!("Failed to write layer");
             break;
         }
@@ -266,7 +293,7 @@ fn main() {
         Program::PlaneWave { reflect } => {
             test_diag_plane_wave(reflect.unwrap_or_default(), stop_token)
         }
-        Program::Wave { rotate } => test_flat_wave(rotate.unwrap_or_default(), stop_token),
+        Program::Wave { rotate } => test_flat_wave(rotate, stop_token),
         Program::Chess { invert } => test_chess(invert.unwrap_or_default(), stop_token),
         Program::OneLayer { which: layer } => test_one_layer(layer, stop_token),
         Program::OneRow { which: row } => test_one_row(row, stop_token),
