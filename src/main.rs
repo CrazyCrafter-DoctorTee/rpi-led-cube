@@ -13,6 +13,8 @@ use std::{
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+use rand::{RngCore, SeedableRng};
+
 use cube::CubeDriver;
 
 type Frame = [[u8; 8]; 8];
@@ -37,7 +39,7 @@ enum Rotation {
 }
 
 impl Rotation {
-    fn apply(&self, data: &[[u8; 8]; 8]) -> [[u8; 8]; 8] {
+    fn apply(&self, data: &[[u8; 8]; 8]) -> Frame {
         match self {
             Self::I => core::array::from_fn(|i| core::array::from_fn(|j| data[j][i])),
             Self::J => core::array::from_fn(|i| core::array::from_fn(|j| data[j].into_iter().fold(0u8, |acc, e| (acc << 1) + if e & (1 << i) != 0 { 1 } else { 0 }))),
@@ -79,6 +81,8 @@ enum Program {
     AllOn,
     /// Cycle one layer at a time
     Cycle,
+    /// Like rainfall
+    Rain,
     /// Plane waves moving diagonally
     PlaneWave { reflect: Option<bool> },
     /// Flat wave
@@ -166,7 +170,7 @@ fn test_chess(invert: bool, stop_token: Arc<AtomicBool>) {
 fn test_one_layer(layer: Index, stop_token: Arc<AtomicBool>) {
     let mut driver = CubeDriver::try_new().unwrap();
 
-    let frame: [[u8; 8]; 8] = core::array::from_fn(|i| {
+    let frame: Frame = core::array::from_fn(|i| {
         if i == u8::from(layer).into() {
             [255; 8]
         } else {
@@ -275,6 +279,32 @@ fn test_flat_wave(rotate: Option<Rotation>, stop_token: Arc<AtomicBool>) {
     let _ = handle.join().expect("Could not join sender thread");
 }
 
+fn test_rain(stop_token: Arc<AtomicBool>) {
+    let (sender, handle) = spawn_display();
+
+    let mut rng = rand::rngs::SmallRng::from_entropy();
+
+    let mut memory = [[0u8; 8]; 8];
+    let mut head = 0usize;
+
+    while !stop_token.load(Ordering::Relaxed) {
+        memory[head] = (rng.next_u64() & rng.next_u64() & rng.next_u64() & rng.next_u64()).to_be_bytes();
+        head = (head + 1) % 8;
+
+        let next_frame: Frame = core::array::from_fn(|i| memory[(head + i) % memory.len()]);
+        if sender.send(next_frame).is_err() {
+            eprintln!("Failed to write layer");
+            break;
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    drop(sender);
+
+    let _ = handle.join().expect("Could not join sender thread");
+}
+
 fn main() {
     let args = Cli::parse();
 
@@ -290,6 +320,7 @@ fn main() {
     match args.program {
         Program::AllOn => test_all_on(stop_token),
         Program::Cycle => test_cycle_layers(stop_token),
+        Program::Rain => test_rain(stop_token),
         Program::PlaneWave { reflect } => {
             test_diag_plane_wave(reflect.unwrap_or_default(), stop_token)
         }
