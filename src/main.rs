@@ -1,7 +1,7 @@
 mod cube;
+mod routines;
 
 use std::{
-    iter::{once, repeat},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{sync_channel, Receiver, SyncSender, TryRecvError},
@@ -13,9 +13,9 @@ use std::{
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use rand::{RngCore, SeedableRng};
-
 use cube::CubeDriver;
+
+use routines::*;
 
 type Frame = [[u8; 8]; 8];
 
@@ -30,6 +30,8 @@ struct Cli {
 #[derive(Copy, Clone, ValueEnum)]
 /// Assume +X is "forward", +Y is "left", and +Z is "up", then
 enum Rotation {
+    /// No-op
+    None,
     /// Rotate about X
     I,
     /// Rotate about Y
@@ -41,9 +43,22 @@ enum Rotation {
 impl Rotation {
     fn apply(&self, data: &[[u8; 8]; 8]) -> Frame {
         match self {
+            Self::None => core::array::from_fn(|i| core::array::from_fn(|j| data[i][j])),
             Self::I => core::array::from_fn(|i| core::array::from_fn(|j| data[j][i])),
-            Self::J => core::array::from_fn(|i| core::array::from_fn(|j| data[j].into_iter().fold(0u8, |acc, e| (acc << 1) + if e & (1 << i) != 0 { 1 } else { 0 }))),
-            Self::K => core::array::from_fn(|i| core::array::from_fn(|j| data[i].into_iter().fold(0u8, |acc, e| (acc << 1) + if e & (1 << j) != 0 { 1 } else { 0 }))),
+            Self::J => core::array::from_fn(|i| {
+                core::array::from_fn(|j| {
+                    data[j].into_iter().fold(0u8, |acc, e| {
+                        (acc << 1) + if e & (1 << i) != 0 { 1 } else { 0 }
+                    })
+                })
+            }),
+            Self::K => core::array::from_fn(|i| {
+                core::array::from_fn(|j| {
+                    data[i].into_iter().fold(0u8, |acc, e| {
+                        (acc << 1) + if e & (1 << j) != 0 { 1 } else { 0 }
+                    })
+                })
+            }),
         }
     }
 }
@@ -121,183 +136,23 @@ fn spawn_display() -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
     (tx, handler)
 }
 
-fn test_all_on(stop_token: Arc<AtomicBool>) {
-    let mut driver = CubeDriver::try_new().unwrap();
-
-    while !stop_token.load(Ordering::Relaxed) {
-        driver.write_frame([[255; 8]; 8]);
-    }
-}
-
-fn test_one_row(row: Index, stop_token: Arc<AtomicBool>) {
-    let mut driver = CubeDriver::try_new().unwrap();
-
-    let layer_pattern: [u8; 8] =
-        core::array::from_fn(|i| if i == u8::from(row).into() { 255 } else { 0 });
-
-    let frame = [layer_pattern; 8];
-
-    while !stop_token.load(Ordering::Relaxed) {
-        driver.write_frame(frame);
-    }
-}
-
-fn test_one_col(col: Index, stop_token: Arc<AtomicBool>) {
-    let mut driver = CubeDriver::try_new().unwrap();
-
-    let frame = [[1 << u8::from(col); 8]; 8];
-
-    while !stop_token.load(Ordering::Relaxed) {
-        driver.write_frame(frame);
-    }
-}
-
-fn test_chess(invert: bool, stop_token: Arc<AtomicBool>) {
-    let mut driver = CubeDriver::try_new().unwrap();
-
-    let evens: u8 = 170;
-    let odds: u8 = 85;
-
-    let layer_pattern = core::array::from_fn(|i| if (i % 2 == 0) != invert { evens } else { odds });
-
-    let frame = [layer_pattern; 8];
-
-    while !stop_token.load(Ordering::Relaxed) {
-        driver.write_frame(frame);
-    }
-}
-
-fn test_one_layer(layer: Index, stop_token: Arc<AtomicBool>) {
-    let mut driver = CubeDriver::try_new().unwrap();
-
-    let frame: Frame = core::array::from_fn(|i| {
-        if i == u8::from(layer).into() {
-            [255; 8]
-        } else {
-            [0; 8]
-        }
-    });
-
-    while !stop_token.load(Ordering::Relaxed) {
-        driver.write_frame(frame);
-    }
-}
-
-fn test_cycle_layers(stop_token: Arc<AtomicBool>) {
+fn run_routine<'a, I>(stop_token: Arc<AtomicBool>, frame_sleep: Duration, frames: I)
+where
+    I: IntoIterator<Item = Frame>,
+{
     let (sender, handle) = spawn_display();
 
-    let mut layer_cycle = once([255; 8]).chain(repeat([0; 8]).take(8)).cycle();
+    for frame in frames {
+        if stop_token.load(Ordering::Relaxed) {
+            break;
+        }
 
-    while !stop_token.load(Ordering::Relaxed) {
-        // Cycle through a window of 9 layers with one lit
-        if sender
-            .send([
-                layer_cycle.next().unwrap(),
-                layer_cycle.next().unwrap(),
-                layer_cycle.next().unwrap(),
-                layer_cycle.next().unwrap(),
-                layer_cycle.next().unwrap(),
-                layer_cycle.next().unwrap(),
-                layer_cycle.next().unwrap(),
-                layer_cycle.next().unwrap(),
-            ])
-            .is_err()
-        {
+        if sender.send(frame).is_err() {
             eprintln!("Failed to write layer");
             break;
         }
 
-        thread::sleep(Duration::from_millis(100));
-    }
-
-    drop(sender);
-
-    let _ = handle.join().expect("Could not join sender thread");
-}
-
-fn test_diag_plane_wave(reflect: bool, stop_token: Arc<AtomicBool>) {
-    let (sender, handle) = spawn_display();
-
-    let base: [u8; 8] = core::array::from_fn(|i| 1u8.rotate_left(i.try_into().unwrap()));
-
-    let mut frame_cycle = (0u32..8u32)
-        .map(|i| base.map(|row| row.rotate_left(i)))
-        .chain((0u32..8u32).map(|i| base.map(|row| row.rotate_right(i))))
-        .take(if reflect { 15 } else { 8 })
-        .cycle();
-
-    while !stop_token.load(Ordering::Relaxed) {
-        if sender.send([frame_cycle.next().unwrap(); 8]).is_err() {
-            eprintln!("Failed to write layer");
-            break;
-        }
-
-        thread::sleep(Duration::from_millis(100));
-    }
-
-    drop(sender);
-
-    let _ = handle.join().expect("Could not join sender thread");
-}
-
-fn test_flat_wave(rotate: Option<Rotation>, stop_token: Arc<AtomicBool>) {
-    let (sender, handle) = spawn_display();
-
-    let template: [[u8; 12]; 8] = [
-        [0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 255, 0, 0, 255, 0, 0, 0, 0],
-        [0, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 0],
-        [0, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 0],
-        [0, 0, 255, 0, 0, 0, 0, 0, 0, 255, 0, 0],
-        [0, 0, 255, 0, 0, 0, 0, 0, 0, 255, 0, 0],
-        [0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0],
-        [255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255],
-    ];
-
-    // LCM 8, 12 = 24
-    let mut frame_cycle = (0usize..96)
-        .map(|i| {
-            core::array::from_fn(|layer| {
-                core::array::from_fn(|j| template[layer][(i + j) % template[layer].len()])
-            })
-        })
-        .cycle();
-
-    while !stop_token.load(Ordering::Relaxed) {
-        let next = frame_cycle.next().unwrap();
-        let next_frame = rotate.map_or(next, |r| r.apply(&next));
-        if sender.send(next_frame).is_err() {
-            eprintln!("Failed to write layer");
-            break;
-        }
-
-        thread::sleep(Duration::from_millis(100));
-    }
-
-    drop(sender);
-
-    let _ = handle.join().expect("Could not join sender thread");
-}
-
-fn test_rain(stop_token: Arc<AtomicBool>) {
-    let (sender, handle) = spawn_display();
-
-    let mut rng = rand::rngs::SmallRng::from_entropy();
-
-    let mut memory = [[0u8; 8]; 8];
-    let mut head = 0usize;
-
-    while !stop_token.load(Ordering::Relaxed) {
-        memory[head] = (rng.next_u64() & rng.next_u64() & rng.next_u64() & rng.next_u64()).to_be_bytes();
-        head = (head + 1) % 8;
-
-        let next_frame: Frame = core::array::from_fn(|i| memory[(head + i) % memory.len()]);
-        if sender.send(next_frame).is_err() {
-            eprintln!("Failed to write layer");
-            break;
-        }
-
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(frame_sleep);
     }
 
     drop(sender);
@@ -317,17 +172,23 @@ fn main() {
     })
     .expect("Error setting Ctrl-C handler");
 
+    let ftime = Duration::from_millis(100);
+
     match args.program {
-        Program::AllOn => test_all_on(stop_token),
-        Program::Cycle => test_cycle_layers(stop_token),
-        Program::Rain => test_rain(stop_token),
-        Program::PlaneWave { reflect } => {
-            test_diag_plane_wave(reflect.unwrap_or_default(), stop_token)
+        Program::AllOn => run_routine(stop_token, ftime, AllOn::new()),
+        Program::Cycle => run_routine(stop_token, ftime, CycleLayers::new()),
+        Program::Rain => run_routine(stop_token, ftime, Rain::new()),
+        Program::PlaneWave { reflect } => run_routine(
+            stop_token,
+            ftime,
+            DiagonalPlane::new(reflect.unwrap_or_default()),
+        ),
+        Program::Wave { rotate } => run_routine(stop_token, ftime, Wave::new()),
+        Program::Chess { invert } => {
+            run_routine(stop_token, ftime, Chess::new(invert.unwrap_or_default()))
         }
-        Program::Wave { rotate } => test_flat_wave(rotate, stop_token),
-        Program::Chess { invert } => test_chess(invert.unwrap_or_default(), stop_token),
-        Program::OneLayer { which: layer } => test_one_layer(layer, stop_token),
-        Program::OneRow { which: row } => test_one_row(row, stop_token),
-        Program::OneCol { which: col } => test_one_col(col, stop_token),
+        Program::OneLayer { which: layer } => run_routine(stop_token, ftime, OneLayer::new(layer)),
+        Program::OneRow { which: row } => run_routine(stop_token, ftime, OneRow::new(row)),
+        Program::OneCol { which: col } => run_routine(stop_token, ftime, OneCol::new(col)),
     };
 }
