@@ -25,9 +25,13 @@ struct Cli {
     /// The display program to run
     #[command(subcommand)]
     program: Program,
+    #[arg(long)]
+    invert: bool,
+    #[arg(long, default_value_t = Rotation::None)]
+    rotate: Rotation,
 }
 
-#[derive(Copy, Clone, ValueEnum)]
+#[derive(Copy, Clone, Debug, ValueEnum)]
 /// Assume +X is "forward", +Y is "left", and +Z is "up", then
 enum Rotation {
     /// No-op
@@ -40,10 +44,25 @@ enum Rotation {
     K,
 }
 
+impl std::fmt::Display for Rotation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_possible_value()
+            .expect("all values possible")
+            .get_name()
+            .fmt(f)
+    }
+}
+
+impl Default for Rotation {
+    fn default() -> Self {
+        Rotation::None
+    }
+}
+
 impl Rotation {
     fn apply(&self, data: &[[u8; 8]; 8]) -> Frame {
         match self {
-            Self::None => core::array::from_fn(|i| core::array::from_fn(|j| data[i][j])),
+            Self::None => data.clone(),
             Self::I => core::array::from_fn(|i| core::array::from_fn(|j| data[j][i])),
             Self::J => core::array::from_fn(|i| {
                 core::array::from_fn(|j| {
@@ -101,9 +120,9 @@ enum Program {
     /// Plane waves moving diagonally
     PlaneWave { reflect: Option<bool> },
     /// Flat wave
-    Wave { rotate: Option<Rotation> },
+    Wave,
     /// Turn on alternate LEDs like a chessboard
-    Chess { invert: Option<bool> },
+    Chess,
     /// Turn on one full layer of LEDs
     OneLayer { which: Index },
     /// Turn on one full row of LEDs
@@ -136,8 +155,13 @@ fn spawn_display() -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
     (tx, handler)
 }
 
-fn run_routine<'a, I>(stop_token: Arc<AtomicBool>, frame_sleep: Duration, frames: I)
-where
+fn run_routine<'a, I>(
+    stop_token: Arc<AtomicBool>,
+    frame_sleep: Duration,
+    frames: I,
+    invert: bool,
+    rotate: Rotation,
+) where
     I: IntoIterator<Item = Frame>,
 {
     let (sender, handle) = spawn_display();
@@ -147,7 +171,16 @@ where
             break;
         }
 
-        if sender.send(frame).is_err() {
+        let mut rotated = rotate.apply(&frame);
+        if invert {
+            for layer in rotated.iter_mut() {
+                for row in layer.iter_mut() {
+                    *row ^= 0xff;
+                }
+            }
+        }
+
+        if sender.send(rotated).is_err() {
             eprintln!("Failed to write layer");
             break;
         }
@@ -175,20 +208,44 @@ fn main() {
     let ftime = Duration::from_millis(100);
 
     match args.program {
-        Program::AllOn => run_routine(stop_token, ftime, AllOn::new()),
-        Program::Cycle => run_routine(stop_token, ftime, CycleLayers::new()),
-        Program::Rain => run_routine(stop_token, ftime, Rain::new()),
+        Program::AllOn => run_routine(stop_token, ftime, AllOn::new(), args.invert, args.rotate),
+        Program::Cycle => run_routine(
+            stop_token,
+            ftime,
+            CycleLayers::new(),
+            args.invert,
+            args.rotate,
+        ),
+        Program::Rain => run_routine(stop_token, ftime, Rain::new(), args.invert, args.rotate),
         Program::PlaneWave { reflect } => run_routine(
             stop_token,
             ftime,
             DiagonalPlane::new(reflect.unwrap_or_default()),
+            args.invert,
+            args.rotate,
         ),
-        Program::Wave { rotate } => run_routine(stop_token, ftime, Wave::new()),
-        Program::Chess { invert } => {
-            run_routine(stop_token, ftime, Chess::new(invert.unwrap_or_default()))
-        }
-        Program::OneLayer { which: layer } => run_routine(stop_token, ftime, OneLayer::new(layer)),
-        Program::OneRow { which: row } => run_routine(stop_token, ftime, OneRow::new(row)),
-        Program::OneCol { which: col } => run_routine(stop_token, ftime, OneCol::new(col)),
+        Program::Wave => run_routine(stop_token, ftime, Wave::new(), args.invert, args.rotate),
+        Program::Chess => run_routine(stop_token, ftime, Chess::new(), args.invert, args.rotate),
+        Program::OneLayer { which: layer } => run_routine(
+            stop_token,
+            ftime,
+            OneLayer::new(layer),
+            args.invert,
+            args.rotate,
+        ),
+        Program::OneRow { which: row } => run_routine(
+            stop_token,
+            ftime,
+            OneRow::new(row),
+            args.invert,
+            args.rotate,
+        ),
+        Program::OneCol { which: col } => run_routine(
+            stop_token,
+            ftime,
+            OneCol::new(col),
+            args.invert,
+            args.rotate,
+        ),
     };
 }

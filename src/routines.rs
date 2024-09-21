@@ -2,7 +2,7 @@ type Frame = [[u8; 8]; 8];
 
 use std::iter::{once, repeat};
 
-use crate::{Index, Rotation};
+use crate::Index;
 
 use rand::{RngCore, SeedableRng};
 
@@ -100,13 +100,11 @@ impl IntoIterator for OneLayer {
     }
 }
 
-pub struct Chess {
-    invert: bool,
-}
+pub struct Chess {}
 
 impl Chess {
-    pub fn new(invert: bool) -> Self {
-        Chess { invert }
+    pub fn new() -> Self {
+        Chess {}
     }
 }
 
@@ -118,13 +116,7 @@ impl IntoIterator for Chess {
         let evens: u8 = 0b10101010;
         let odds: u8 = 0b01010101;
 
-        let layer_pattern = core::array::from_fn(|i| {
-            if (i % 2 == 0) != self.invert {
-                evens
-            } else {
-                odds
-            }
-        });
+        let layer_pattern = core::array::from_fn(|i| if i % 2 == 0 { evens } else { odds });
 
         let frame = [layer_pattern; 8];
 
@@ -255,7 +247,7 @@ impl Iterator for Wave {
         self.i = (self.i + 1) % 96;
 
         Some(core::array::from_fn(|layer| {
-            core::array::from_fn(|j| template[layer][(self.i + j) % template[layer].len()])
+            core::array::from_fn(|j| template[layer][(old_i + j) % template[layer].len()])
         }))
     }
 }
