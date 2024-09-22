@@ -23,6 +23,37 @@ impl IntoIterator for AllOn {
     }
 }
 
+pub struct OneOn {
+    row: u8,
+    col: u8,
+    layer: u8,
+}
+
+impl OneOn {
+    pub fn new(row_: Index, col_: Index, layer_: Index) -> Self {
+        OneOn {
+            row: row_.into(),
+            col: col_.into(),
+            layer: layer_.into(),
+        }
+    }
+}
+
+impl IntoIterator for OneOn {
+    type Item = Frame;
+    type IntoIter = std::iter::Repeat<Frame>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        use std::ops::Shl;
+
+        let mut frame = [[0u8; 8]; 8];
+
+        frame[self.layer as usize][self.row as usize] = 1u8.shl(self.col);
+
+        repeat(frame)
+    }
+}
+
 pub struct OneRow {
     row: u8,
 }

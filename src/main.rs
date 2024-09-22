@@ -17,6 +17,7 @@ use cube::CubeDriver;
 
 use routines::*;
 
+/// Outer array is Z/layer, inner array is X/row, each bit is Y/column
 type Frame = [[u8; 8]; 8];
 
 /// Bit-bang the PI GPIO pins to render 3D values on the LED cube
@@ -63,18 +64,22 @@ impl Rotation {
     fn apply(&self, data: &[[u8; 8]; 8]) -> Frame {
         match self {
             Self::None => data.clone(),
-            Self::I => core::array::from_fn(|i| core::array::from_fn(|j| data[j][i])),
-            Self::J => core::array::from_fn(|i| {
-                core::array::from_fn(|j| {
-                    data[j].into_iter().fold(0u8, |acc, e| {
-                        (acc << 1) + if e & (1 << i) != 0 { 1 } else { 0 }
+            Self::I => core::array::from_fn(|layer| {
+                core::array::from_fn(|row| {
+                    // Build a row from each of the bits in the corresponding layer
+                    (0..8).map(|l| data[l][row]).fold(0u8, |acc, e| {
+                        (acc << 1) + if e & (1 << layer) != 0 { 1 } else { 0 }
                     })
                 })
             }),
-            Self::K => core::array::from_fn(|i| {
-                core::array::from_fn(|j| {
-                    data[i].into_iter().fold(0u8, |acc, e| {
-                        (acc << 1) + if e & (1 << j) != 0 { 1 } else { 0 }
+            Self::J => {
+                core::array::from_fn(|layer| core::array::from_fn(|row| data[row][7 - layer]))
+            }
+            Self::K => core::array::from_fn(|layer| {
+                core::array::from_fn(|row| {
+                    // Build row from each of the bits in the corresponding column
+                    data[layer].into_iter().fold(0u8, |acc, e| {
+                        (acc << 1) + if e & (1 << row) != 0 { 1 } else { 0 }
                     })
                 })
             }),
@@ -113,6 +118,12 @@ impl From<Index> for u8 {
 enum Program {
     /// Turn on all of the LEDs
     AllOn,
+    /// Turn on a single LED
+    OneOn {
+        row: Index,
+        col: Index,
+        layer: Index,
+    },
     /// Cycle one layer at a time
     Cycle,
     /// Like rainfall
@@ -171,16 +182,14 @@ fn run_routine<'a, I>(
             break;
         }
 
-        let mut rotated = rotate.apply(&frame);
-        if invert {
-            for layer in rotated.iter_mut() {
-                for row in layer.iter_mut() {
-                    *row ^= 0xff;
-                }
-            }
-        }
+        let rotated = rotate.apply(&frame);
+        let inverted = if invert {
+            rotated.map(|layer| layer.map(|row| row ^ 0xff))
+        } else {
+            rotated
+        };
 
-        if sender.send(rotated).is_err() {
+        if sender.send(inverted).is_err() {
             eprintln!("Failed to write layer");
             break;
         }
@@ -209,6 +218,13 @@ fn main() {
 
     match args.program {
         Program::AllOn => run_routine(stop_token, ftime, AllOn::new(), args.invert, args.rotate),
+        Program::OneOn { row, col, layer } => run_routine(
+            stop_token,
+            ftime,
+            OneOn::new(row, col, layer),
+            args.invert,
+            args.rotate,
+        ),
         Program::Cycle => run_routine(
             stop_token,
             ftime,
