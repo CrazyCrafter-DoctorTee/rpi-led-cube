@@ -282,3 +282,29 @@ impl Iterator for Wave {
         }))
     }
 }
+
+pub struct MiniCube {}
+
+impl MiniCube {
+    pub fn new() -> Self {
+        MiniCube {}
+    }
+}
+
+impl IntoIterator for MiniCube {
+    type Item = Frame;
+    type IntoIter = std::iter::Repeat<Frame>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        repeat([
+            [255, 129, 129, 129, 129, 129, 129, 255],
+            [129, 66, 0, 0, 0, 0, 66, 129],
+            [129, 0, 60, 36, 36, 60, 0, 129],
+            [129, 0, 36, 0, 0, 36, 0, 129],
+            [129, 0, 36, 0, 0, 36, 0, 129],
+            [129, 0, 60, 36, 36, 60, 0, 129],
+            [129, 66, 0, 0, 0, 0, 66, 129],
+            [255, 129, 129, 129, 129, 129, 129, 255],
+        ])
+    }
+}

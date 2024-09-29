@@ -140,6 +140,8 @@ enum Program {
     OneRow { which: Index },
     /// Turn on one full column of LEDs
     OneCol { which: Index },
+    /// Tiny cube in a cube
+    MiniCube,
 }
 
 fn spawn_display() -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
@@ -260,6 +262,13 @@ fn main() {
             stop_token,
             ftime,
             OneCol::new(col),
+            args.invert,
+            args.rotate,
+        ),
+        Program::MiniCube => run_routine(
+            stop_token,
+            ftime,
+            MiniCube::new(),
             args.invert,
             args.rotate,
         ),
