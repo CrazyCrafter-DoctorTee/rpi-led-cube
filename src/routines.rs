@@ -308,3 +308,38 @@ impl IntoIterator for MiniCube {
         ])
     }
 }
+
+pub struct RandomFlip {
+    rng: rand::rngs::SmallRng,
+    state: Frame,
+}
+
+impl RandomFlip {
+    pub fn new() -> Self {
+        let evens: u8 = 0b10101010;
+        let odds: u8 = 0b01010101;
+
+        let a = [odds, evens, odds, evens, odds, evens, odds, evens];
+        let b = [evens, odds, evens, odds, evens, odds, evens, odds];
+
+        RandomFlip {
+            rng: rand::rngs::SmallRng::from_entropy(),
+            state: [a, b, a, b, a, b, a, b],
+        }
+    }
+}
+
+impl Iterator for RandomFlip {
+    type Item = Frame;
+
+    fn next(&mut self) -> Option<Frame> {
+        let choice = self.rng.next_u32() as usize;
+        let layer = choice % 8;
+        let row = (choice >> 3) % 8;
+        let mask = 1 << ((choice >> 6) % 8);
+
+        self.state[layer][row] ^= mask;
+
+        Some(self.state)
+    }
+}

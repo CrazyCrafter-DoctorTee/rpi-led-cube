@@ -142,6 +142,8 @@ enum Program {
     OneCol { which: Index },
     /// Tiny cube in a cube
     MiniCube,
+    /// Flip a random bit at a time
+    RandomFlip,
 }
 
 fn spawn_display() -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
@@ -272,5 +274,6 @@ fn main() {
             args.invert,
             args.rotate,
         ),
+        Program::RandomFlip => run_routine(stop_token, ftime, RandomFlip::new(), args.invert, args.rotate),
     };
 }
