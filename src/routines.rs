@@ -343,3 +343,37 @@ impl Iterator for RandomFlip {
         Some(self.state)
     }
 }
+
+pub struct LittleBlips {
+    rng: rand::rngs::SmallRng,
+}
+
+impl LittleBlips {
+    pub fn new() -> Self {
+        LittleBlips {
+            rng: rand::rngs::SmallRng::from_entropy(),
+        }
+    }
+
+    fn gen_layer(&mut self) -> [u8; 8] {
+        (self.rng.next_u64() & self.rng.next_u64() & self.rng.next_u64() & self.rng.next_u64())
+            .to_be_bytes()
+    }
+}
+
+impl Iterator for LittleBlips {
+    type Item = Frame;
+
+    fn next(&mut self) -> Option<Frame> {
+        Some([
+            self.gen_layer(),
+            self.gen_layer(),
+            self.gen_layer(),
+            self.gen_layer(),
+            self.gen_layer(),
+            self.gen_layer(),
+            self.gen_layer(),
+            self.gen_layer(),
+        ])
+    }
+}

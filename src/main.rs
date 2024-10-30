@@ -144,6 +144,8 @@ enum Program {
     MiniCube,
     /// Flip a random bit at a time
     RandomFlip,
+    /// A fistful of lights
+    LittleBlips,
 }
 
 fn spawn_display() -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
@@ -267,13 +269,22 @@ fn main() {
             args.invert,
             args.rotate,
         ),
-        Program::MiniCube => run_routine(
+        Program::MiniCube => {
+            run_routine(stop_token, ftime, MiniCube::new(), args.invert, args.rotate)
+        }
+        Program::RandomFlip => run_routine(
             stop_token,
             ftime,
-            MiniCube::new(),
+            RandomFlip::new(),
             args.invert,
             args.rotate,
         ),
-        Program::RandomFlip => run_routine(stop_token, ftime, RandomFlip::new(), args.invert, args.rotate),
+        Program::LittleBlips => run_routine(
+            stop_token,
+            Duration::from_millis(200),
+            LittleBlips::new(),
+            args.invert,
+            args.rotate,
+        ),
     };
 }
