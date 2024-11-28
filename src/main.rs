@@ -4,7 +4,7 @@ mod routines;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{sync_channel, Receiver, SyncSender, TryRecvError},
+        mpsc::{sync_channel, Receiver, RecvError, SyncSender, TryRecvError},
         Arc,
     },
     thread::{self, JoinHandle},
@@ -149,7 +149,7 @@ enum Program {
 }
 
 fn spawn_display() -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
-    let (tx, rx): (SyncSender<Frame>, Receiver<Frame>) = sync_channel(64);
+    let (tx, rx): (SyncSender<Frame>, Receiver<Frame>) = sync_channel(0);
 
     let handler = thread::spawn(move || {
         let mut driver = CubeDriver::try_new()?;
@@ -172,6 +172,41 @@ fn spawn_display() -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
     (tx, handler)
 }
 
+/// Consumes frames at up to a fixed rate from the sender to display
+fn spawn_ratelimited_display(
+    frame_sleep: Duration,
+    stop_token: Arc<AtomicBool>,
+) -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
+    let (tx, rx): (SyncSender<Frame>, Receiver<Frame>) = sync_channel(64);
+
+    let handler = thread::spawn(move || {
+        let (sender, handle) = spawn_display();
+
+        loop {
+            if stop_token.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let maybe_frame = rx.recv();
+            if let Ok(frame) = maybe_frame {
+                if sender.send(frame).is_err() {
+                    eprintln!("Failed to hand off layer");
+                    break;
+                }
+            } else if let Err(RecvError) = maybe_frame {
+                break;
+            }
+            thread::sleep(frame_sleep);
+        }
+
+        drop(sender);
+
+        handle.join().expect("Could not join sender thread")
+    });
+
+    (tx, handler)
+}
+
 fn run_routine<'a, I>(
     stop_token: Arc<AtomicBool>,
     frame_sleep: Duration,
@@ -181,13 +216,9 @@ fn run_routine<'a, I>(
 ) where
     I: IntoIterator<Item = Frame>,
 {
-    let (sender, handle) = spawn_display();
+    let (sender, handle) = spawn_ratelimited_display(frame_sleep, stop_token);
 
     for frame in frames {
-        if stop_token.load(Ordering::Relaxed) {
-            break;
-        }
-
         let rotated = rotate.apply(&frame);
         let inverted = if invert {
             rotated.map(|layer| layer.map(|row| row ^ 0xff))
@@ -195,12 +226,10 @@ fn run_routine<'a, I>(
             rotated
         };
 
+        // Send fails when stop token triggers
         if sender.send(inverted).is_err() {
-            eprintln!("Failed to write layer");
             break;
         }
-
-        thread::sleep(frame_sleep);
     }
 
     drop(sender);
