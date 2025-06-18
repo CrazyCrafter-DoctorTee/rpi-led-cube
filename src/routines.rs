@@ -377,3 +377,210 @@ impl Iterator for LittleBlips {
         ])
     }
 }
+
+pub struct Traveller {
+    rng: rand::rngs::SmallRng,
+    last_x: u8,
+    last_y: u8,
+    last_z: u8,
+    current_x: u8,
+    current_y: u8,
+    current_z: u8,
+}
+
+impl Traveller {
+    pub fn new() -> Self {
+        Traveller {
+            rng: rand::rngs::SmallRng::from_entropy(),
+            last_x: 4,
+            last_y: 4,
+            last_z: 4,
+            current_x: 4,
+            current_y: 4,
+            current_z: 3,
+        }
+    }
+
+    fn pick_x(&self, dir: bool) -> (u8, u8, u8) {
+        if self.current_x == 7 {
+            (6, self.current_y, self.current_z)
+        } else if self.current_x == 0 {
+            (1, self.current_y, self.current_z)
+        } else if dir {
+            (self.current_x - 1, self.current_y, self.current_z)
+        } else {
+            (self.current_x + 1, self.current_y, self.current_z)
+        }
+    }
+
+    fn pick_y(&self, dir: bool) -> (u8, u8, u8) {
+        if self.current_y == 7 {
+            (self.current_x, 6, self.current_z)
+        } else if self.current_y == 0 {
+            (self.current_x, 1, self.current_z)
+        } else if dir {
+            (self.current_x, self.current_y - 1, self.current_z)
+        } else {
+            (self.current_x, self.current_y + 1, self.current_z)
+        }
+    }
+
+    fn pick_z(&self, dir: bool) -> (u8, u8, u8) {
+        if self.current_z == 7 {
+            (self.current_x, self.current_y, 6)
+        } else if self.current_z == 0 {
+            (self.current_x, self.current_y, 1)
+        } else if dir {
+            (self.current_x, self.current_y, self.current_z - 1)
+        } else {
+            (self.current_x, self.current_y, self.current_z + 1)
+        }
+    }
+
+    /// Pick a new pixel to light up while "moving" orthogonally
+    /// This needs to avoid backtracking and overflows
+    fn pick(&mut self) -> (u8, u8, u8) {
+        let choice = self.rng.next_u32();
+        let dir = choice & 1 == 0;
+
+        if self.last_x > self.current_x {
+            // Hit the wall
+            if self.current_x == 0 {
+                if choice & 2 == 0 {
+                    self.pick_y(dir)
+                } else {
+                    self.pick_z(dir)
+                }
+            } else {
+                if choice & 2 == 0 {
+                    if choice & 4 == 0 {
+                        self.pick_y(dir)
+                    } else {
+                        self.pick_z(dir)
+                    }
+                } else {
+                    (self.current_x - 1, self.current_y, self.current_z)
+                }
+            }
+        } else if self.last_x < self.current_x {
+            // Hit the wall
+            if self.current_x == 7 {
+                if choice & 2 == 0 {
+                    self.pick_y(dir)
+                } else {
+                    self.pick_z(dir)
+                }
+            } else {
+                if choice & 2 == 0 {
+                    if choice & 4 == 0 {
+                        self.pick_y(dir)
+                    } else {
+                        self.pick_z(dir)
+                    }
+                } else {
+                    (self.current_x + 1, self.current_y, self.current_z)
+                }
+            }
+        } else if self.last_y > self.current_y {
+            // Hit the wall
+            if self.current_y == 0 {
+                if choice & 2 == 0 {
+                    self.pick_x(dir)
+                } else {
+                    self.pick_z(dir)
+                }
+            } else {
+                if choice & 2 == 0 {
+                    if choice & 4 == 0 {
+                        self.pick_x(dir)
+                    } else {
+                        self.pick_z(dir)
+                    }
+                } else {
+                    (self.current_x, self.current_y - 1, self.current_z)
+                }
+            }
+        } else if self.last_y < self.current_y {
+            // Hit the wall
+            if self.current_y == 7 {
+                if choice & 2 == 0 {
+                    self.pick_x(dir)
+                } else {
+                    self.pick_z(dir)
+                }
+            } else {
+                if choice & 2 == 0 {
+                    if choice & 4 == 0 {
+                        self.pick_x(dir)
+                    } else {
+                        self.pick_z(dir)
+                    }
+                } else {
+                    (self.current_x, self.current_y + 1, self.current_z)
+                }
+            }
+        } else if self.last_z > self.current_z {
+            // Hit the wall
+            if self.current_z == 0 {
+                if choice & 2 == 0 {
+                    self.pick_x(dir)
+                } else {
+                    self.pick_y(dir)
+                }
+            } else {
+                if choice & 2 == 0 {
+                    if choice & 4 == 0 {
+                        self.pick_x(dir)
+                    } else {
+                        self.pick_y(dir)
+                    }
+                } else {
+                    (self.current_x, self.current_y, self.current_z - 1)
+                }
+            }
+        } else {
+            // Hit the wall
+            if self.current_z == 7 {
+                if choice & 2 == 0 {
+                    self.pick_x(dir)
+                } else {
+                    self.pick_y(dir)
+                }
+            } else {
+                if choice & 2 == 0 {
+                    if choice & 4 == 0 {
+                        self.pick_x(dir)
+                    } else {
+                        self.pick_y(dir)
+                    }
+                } else {
+                    (self.current_x, self.current_y, self.current_z + 1)
+                }
+            }
+        }
+    }
+}
+
+impl Iterator for Traveller {
+    type Item = Frame;
+
+    fn next(&mut self) -> Option<Frame> {
+        let (next_x, next_y, next_z) = self.pick();
+
+        let mut frame: Frame = [[0; 8]; 8];
+
+        frame[self.last_z as usize][self.last_x as usize] |= 1 << self.last_y;
+        frame[self.current_z as usize][self.current_x as usize] |= 1 << self.current_y;
+        frame[next_z as usize][next_x as usize] |= 1 << next_y;
+
+        self.last_x = self.current_x;
+        self.last_y = self.current_y;
+        self.last_z = self.current_z;
+
+        self.current_x = next_x;
+        self.current_y = next_y;
+        self.current_z = next_z;
+
+        Some(frame)
+    }
+}

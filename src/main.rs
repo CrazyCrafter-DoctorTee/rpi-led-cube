@@ -146,6 +146,8 @@ enum Program {
     RandomFlip,
     /// A fistful of lights
     LittleBlips,
+    /// A moving snake
+    Traveller,
 }
 
 fn spawn_display() -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
@@ -312,6 +314,13 @@ fn main() {
             stop_token,
             Duration::from_millis(200),
             LittleBlips::new(),
+            args.invert,
+            args.rotate,
+        ),
+        Program::Traveller => run_routine(
+            stop_token,
+            ftime,
+            Traveller::new(),
             args.invert,
             args.rotate,
         ),
