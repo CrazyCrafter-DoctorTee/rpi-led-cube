@@ -1,7 +1,9 @@
 mod cube;
+mod decoders;
 mod routines;
 
 use std::{
+    io::stdin,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{sync_channel, Receiver, RecvError, SyncSender, TryRecvError},
@@ -16,6 +18,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use cube::CubeDriver;
 
 use routines::*;
+
+use crate::decoders::read_base16_frame;
 
 /// Outer array is Z/layer, inner array is X/row, each bit is Y/column
 type Frame = [[u8; 8]; 8];
@@ -148,6 +152,8 @@ enum Program {
     LittleBlips,
     /// A moving snake
     Traveller,
+    /// Read hexadecimal frame data from stdin
+    Listener,
 }
 
 fn spawn_display() -> (SyncSender<Frame>, JoinHandle<rppal::gpio::Result<()>>) {
@@ -321,6 +327,14 @@ fn main() {
             stop_token,
             ftime,
             Traveller::new(),
+            args.invert,
+            args.rotate,
+        ),
+        // Broken, not respecting stop token...
+        Program::Listener => run_routine(
+            stop_token,
+            ftime,
+            stdin().lines().map(|l| l.ok().and_then(|s| read_base16_frame(&s).ok())).flatten(),
             args.invert,
             args.rotate,
         ),
